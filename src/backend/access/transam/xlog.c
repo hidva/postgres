@@ -336,14 +336,14 @@ XLogRecPtr	XactLastCommitEnd = InvalidXLogRecPtr;
  * see GetRedoRecPtr.  A freshly spawned backend obtains the value during
  * InitXLOGAccess.
  */
-static XLogRecPtr RedoRecPtr;
+XLogRecPtr RedoRecPtr;
 
 /*
  * doPageWrites is this backend's local copy of (forcePageWrites ||
  * fullPageWrites).  It is used together with RedoRecPtr to decide whether
  * a full-page image of a page need to be taken.
  */
-static bool doPageWrites;
+bool doPageWrites;
 
 /* Has the recovery code requested a walreceiver wakeup? */
 static bool doRequestWalReceiverReply;
@@ -691,7 +691,7 @@ static WALInsertLockPadded *WALInsertLocks = NULL;
 /*
  * We maintain an image of pg_control in shared memory.
  */
-static ControlFileData *ControlFile = NULL;
+ControlFileData *ControlFile = NULL;
 
 /*
  * Calculate the amount of space left on the page after 'endptr'. Beware
@@ -899,15 +899,21 @@ static bool ReserveXLogSwitch(XLogRecPtr *StartPos, XLogRecPtr *EndPos,
 				  XLogRecPtr *PrevPtr);
 static XLogRecPtr WaitXLogInsertionsToFinish(XLogRecPtr upto);
 static char *GetXLogBuffer(XLogRecPtr ptr);
-static XLogRecPtr XLogBytePosToRecPtr(uint64 bytepos);
-static XLogRecPtr XLogBytePosToEndRecPtr(uint64 bytepos);
-static uint64 XLogRecPtrToBytePos(XLogRecPtr ptr);
-
 static void WALInsertLockAcquire(void);
 static void WALInsertLockAcquireExclusive(void);
 static void WALInsertLockRelease(void);
 static void WALInsertLockUpdateInsertingAt(XLogRecPtr insertingAt);
+extern void InitXLOGV1Insert(uint64 prev, uint64 curr);
 
+void
+UpdateRedoRecPtrPageWrite()
+{
+	XLogCtlInsert *Insert = &XLogCtl->Insert;
+	RedoRecPtr = Insert->RedoRecPtr;
+	doPageWrites = (Insert->fullPageWrites || Insert->forcePageWrites);
+}
+
+#if 0
 /*
  * Insert an XLOG record represented by an already-constructed chain of data
  * chunks.  This is a low-level routine; to construct the WAL record header
@@ -1174,6 +1180,7 @@ XLogInsertRecord(XLogRecData *rdata, XLogRecPtr fpw_lsn)
 
 	return EndPos;
 }
+#endif
 
 /*
  * Reserves the right amount of space for a record of given size from the WAL.
@@ -1773,7 +1780,7 @@ GetXLogBuffer(XLogRecPtr ptr)
  * is the position starting from the beginning of WAL, excluding all WAL
  * page headers.
  */
-static XLogRecPtr
+XLogRecPtr
 XLogBytePosToRecPtr(uint64 bytepos)
 {
 	uint64		fullsegs;
@@ -1813,7 +1820,7 @@ XLogBytePosToRecPtr(uint64 bytepos)
  * not to where the first xlog record on that page would go to. This is used
  * when converting a pointer to the end of a record.
  */
-static XLogRecPtr
+XLogRecPtr
 XLogBytePosToEndRecPtr(uint64 bytepos)
 {
 	uint64		fullsegs;
@@ -1856,7 +1863,7 @@ XLogBytePosToEndRecPtr(uint64 bytepos)
 /*
  * Convert an XLogRecPtr to a "usable byte position".
  */
-static uint64
+uint64
 XLogRecPtrToBytePos(XLogRecPtr ptr)
 {
 	uint64		fullsegs;
@@ -2619,6 +2626,7 @@ UpdateMinRecoveryPoint(XLogRecPtr lsn, bool force)
 	LWLockRelease(ControlFileLock);
 }
 
+#if 0
 /*
  * Ensure that all XLOG data through the given position is flushed to disk.
  *
@@ -2789,6 +2797,7 @@ XLogFlush(XLogRecPtr record)
 			 (uint32) (record >> 32), (uint32) record,
 		   (uint32) (LogwrtResult.Flush >> 32), (uint32) LogwrtResult.Flush);
 }
+#endif
 
 /*
  * Write & flush xlog, but without specifying exactly where to.
@@ -2822,6 +2831,7 @@ XLogBackgroundFlush(void)
 	static TimestampTz lastflush;
 	TimestampTz now;
 	int			flushbytes;
+	return false;
 
 	/* XLOG doesn't need flushing during recovery */
 	if (RecoveryInProgress())
@@ -4734,6 +4744,8 @@ XLOGShmemSize(void)
 	return size;
 }
 
+extern void XLOGV1InsertShmemInit();
+
 void
 XLOGShmemInit(void)
 {
@@ -4758,6 +4770,7 @@ XLOGShmemInit(void)
 	}
 #endif
 
+	XLOGV1InsertShmemInit();
 	ControlFile = (ControlFileData *)
 		ShmemInitStruct("Control File", sizeof(ControlFileData), &foundCFile);
 	XLogCtl = (XLogCtlData *)
@@ -7282,6 +7295,7 @@ StartupXLOG(void)
 	Insert = &XLogCtl->Insert;
 	Insert->PrevBytePos = XLogRecPtrToBytePos(LastRec);
 	Insert->CurrBytePos = XLogRecPtrToBytePos(EndOfLog);
+	InitXLOGV1Insert(Insert->PrevBytePos, Insert->CurrBytePos);
 
 	/*
 	 * Tricky point here: readBuf contains the *last* block that the LastRec
@@ -8308,6 +8322,8 @@ CreateCheckPoint(int flags)
 	VirtualTransactionId *vxids;
 	int			nvxids;
 
+	elog(LOG, "CreateCheckPoint; flags: %d", flags);
+	return;
 	/*
 	 * An end-of-recovery checkpoint is really a shutdown checkpoint, just
 	 * issued at a different time.

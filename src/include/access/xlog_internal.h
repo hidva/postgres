@@ -314,5 +314,10 @@ extern bool XLogArchiveIsBusy(const char *xlog);
 extern bool XLogArchiveIsReady(const char *xlog);
 extern bool XLogArchiveIsReadyOrDone(const char *xlog);
 extern void XLogArchiveCleanup(const char *xlog);
+extern XLogRecPtr XLogBytePosToRecPtr(uint64 bytepos);
+extern XLogRecPtr XLogBytePosToEndRecPtr(uint64 bytepos);
+extern uint64 XLogRecPtrToBytePos(XLogRecPtr ptr);
+
+
 
 #endif   /* XLOG_INTERNAL_H */

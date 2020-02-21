@@ -951,6 +951,8 @@ RequestCheckpoint(int flags)
 	int			ntries;
 	int			old_failed,
 				old_started;
+	elog(LOG, "RequestCheckpoint; flags: %d", flags);
+	return;
 
 	/*
 	 * If in a standalone backend, just do it ourselves.

@@ -2260,7 +2260,7 @@ static struct config_int ConfigureNamesInt[] =
 			GUC_UNIT_S
 		},
 		&CheckPointTimeout,
-		300, 30, 86400,
+		300, 30, INT_MAX,
 		NULL, NULL, NULL
 	},
 

@@ -45,6 +45,12 @@
 #ifndef C_H
 #define C_H
 
+#ifdef __cplusplus
+#define __PG_NO_THROW noexcept
+#else
+#define __PG_NO_THROW 
+#endif
+
 #include "postgres_ext.h"
 
 /* Must undef pg_config_ext.h symbols before including pg_config.h */
