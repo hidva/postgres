@@ -29,4 +29,8 @@ extern void ExecForeignScanInitializeDSM(ForeignScanState *node,
 extern void ExecForeignScanInitializeWorker(ForeignScanState *node,
 								shm_toc *toc);
 
+extern int buffered_scan_cap;
+extern BufferedForeignScanState *ExecInitBufferedForeignScan(ForeignScan *node, EState *estate, int eflags);
+extern void ExecBufferedForeignScan(BufferedForeignScanState *node);
+extern void ExecEndBufferedForeignScan(BufferedForeignScanState *node);
 #endif   /* NODEFOREIGNSCAN_H */

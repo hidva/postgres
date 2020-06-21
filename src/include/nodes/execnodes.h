@@ -1596,6 +1596,14 @@ typedef struct ForeignScanState
 	void	   *fdw_state;		/* foreign-data wrapper can keep state here */
 } ForeignScanState;
 
+typedef struct BufferedForeignScanState {
+	ForeignScanState scan;
+	TupleTableSlot *buffers;  // capacity: buffered_scan_cap
+	int buffersize;
+	int bufferidx;
+	bool is_done;
+} BufferedForeignScanState;
+
 /* ----------------
  *	 CustomScanState information
  *

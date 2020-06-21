@@ -910,11 +910,11 @@ ExplainNode(PlanState *planstate, List *ancestors,
 			pname = sname = "WorkTable Scan";
 			break;
 		case T_ForeignScan:
-			sname = "Foreign Scan";
+			sname = IsA(planstate, BufferedForeignScanState) ? "Buffered Foreign Scan" : "Foreign Scan";
 			switch (((ForeignScan *) plan)->operation)
 			{
 				case CMD_SELECT:
-					pname = "Foreign Scan";
+					pname = sname;
 					operation = "Select";
 					break;
 				case CMD_INSERT:

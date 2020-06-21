@@ -230,9 +230,9 @@ ExecInitForeignScan(ForeignScan *node, EState *estate, int eflags)
 	 * Tell the FDW to initialize the scan.
 	 */
 	if (node->operation != CMD_SELECT)
-		fdwroutine->BeginDirectModify(scanstate, eflags);
+		scanstate->fdwroutine->BeginDirectModify(scanstate, eflags);
 	else
-		fdwroutine->BeginForeignScan(scanstate, eflags);
+		scanstate->fdwroutine->BeginForeignScan(scanstate, eflags);
 
 	return scanstate;
 }
@@ -354,4 +354,123 @@ ExecForeignScanInitializeWorker(ForeignScanState *node, shm_toc *toc)
 		coordinate = shm_toc_lookup(toc, plan_node_id);
 		fdwroutine->InitializeWorkerForeignScan(node, toc, coordinate);
 	}
+}
+
+BufferedForeignScanState*
+ExecInitBufferedForeignScan(ForeignScan *node, EState *estate, int eflags)
+{
+	BufferedForeignScanState *state = (BufferedForeignScanState*)makeNode(BufferedForeignScanState);
+	Index		tlistvarno;
+	Index		scanrelid = node->scan.scanrelid;
+	ForeignScanState *scanstate = &state->scan;
+	scanstate->ss.ps.plan = (Plan *) node;
+	scanstate->ss.ps.state = estate;
+	ExecAssignExprContext(estate, &scanstate->ss.ps);
+	scanstate->ss.ps.ps_TupFromTlist = false;
+	scanstate->ss.ps.targetlist = (List *)ExecInitExpr((Expr *) node->scan.plan.targetlist, (PlanState *) scanstate);
+	scanstate->ss.ps.qual = (List *)ExecInitExpr((Expr *) node->scan.plan.qual, (PlanState *) scanstate);
+	scanstate->fdw_recheck_quals = (List *)ExecInitExpr((Expr *) node->fdw_recheck_quals, (PlanState *) scanstate);
+	ExecInitResultTupleSlot(estate, &scanstate->ss.ps);
+	ExecInitScanTupleSlot(estate, &scanstate->ss);
+	if (scanrelid > 0) {
+		scanstate->ss.ss_currentRelation = ExecOpenScanRelation(estate, scanrelid, eflags);;
+		scanstate->fdwroutine = GetFdwRoutineForRelation(scanstate->ss.ss_currentRelation, true);
+	} else {
+		scanstate->fdwroutine = GetFdwRoutineByServerId(node->fs_server);
+	}
+	if (node->fdw_scan_tlist != NIL || scanstate->ss.ss_currentRelation == NULL) {
+		TupleDesc	scan_tupdesc;
+		scan_tupdesc = ExecTypeFromTL(node->fdw_scan_tlist, false);
+		ExecAssignScanType(&scanstate->ss, scan_tupdesc);
+		tlistvarno = INDEX_VAR;
+	} else {
+		ExecAssignScanType(&scanstate->ss, RelationGetDescr(scanstate->ss.ss_currentRelation));
+		tlistvarno = scanrelid;
+	}
+	ExecAssignResultTypeFromTL(&scanstate->ss.ps);
+	ExecAssignScanProjectionInfoWithVarno(&scanstate->ss, tlistvarno);
+	scanstate->fdw_state = NULL;
+	if (outerPlan(node))
+		outerPlanState(scanstate) = ExecInitNode(outerPlan(node), estate, eflags);
+	if (node->operation != CMD_SELECT)
+		scanstate->fdwroutine->BeginDirectModify(scanstate, eflags);
+	else
+		scanstate->fdwroutine->BeginForeignScan(scanstate, eflags);
+
+	state->buffers = palloc0(sizeof(TupleTableSlot) * buffered_scan_cap);
+	for (int i = 0; i < buffered_scan_cap; ++i)
+	{
+		TupleTableSlot *slot = &state->buffers[i];
+		slot->type = T_TupleTableSlot;
+		slot->tts_isempty = true;
+		slot->tts_mcxt = CurrentMemoryContext;
+		ExecSetSlotDescriptor(slot, RelationGetDescr(scanstate->ss.ss_currentRelation));
+		estate->es_tupleTable = lappend(estate->es_tupleTable, slot);
+	}
+	if (state->scan.ss.ps.ps_ProjInfo)
+		elog(ERROR, "unsupported");
+	return state;
+}
+
+/*
+ * `node->buffersize >= buffered_Foreignscan_cap || TupIsNull(node->buffers[node->buffersize])`
+ * shoule be true after the return
+ */
+void
+ExecBufferedForeignScan(BufferedForeignScanState *bufferedstate)
+{
+	TupleTableSlot *oldscanslot = bufferedstate->scan.ss.ss_ScanTupleSlot;
+	ExprContext *econtext = bufferedstate->scan.ss.ps.ps_ExprContext;
+	List *qual = bufferedstate->scan.ss.ps.qual;
+	ScanState *node = &bufferedstate->scan.ss;
+	for (bufferedstate->buffersize = 0; bufferedstate->buffersize < buffered_scan_cap; ++bufferedstate->buffersize) {
+		TupleTableSlot *slot = &bufferedstate->buffers[bufferedstate->buffersize];
+		bufferedstate->scan.ss.ss_ScanTupleSlot = slot;
+		while (true) {
+			ForeignNext(&bufferedstate->scan);
+			if (TupIsNull(slot)) {
+				bufferedstate->is_done = true;
+				bufferedstate->scan.ss.ss_ScanTupleSlot = oldscanslot;
+				return;
+			}
+			econtext->ecxt_scantuple = slot;
+			if (!qual || ExecQual(qual, econtext, false))
+				break;
+			else
+				InstrCountFiltered1(node, 1);
+		}
+	}
+	bufferedstate->scan.ss.ss_ScanTupleSlot = oldscanslot;
+	return;
+}
+
+void
+ExecEndBufferedForeignScan(BufferedForeignScanState *state)
+{
+	ForeignScanState *node = &state->scan;
+	ForeignScan *plan = (ForeignScan *) node->ss.ps.plan;
+
+	/* Let the FDW shut down */
+	if (plan->operation != CMD_SELECT)
+		node->fdwroutine->EndDirectModify(node);
+	else
+		node->fdwroutine->EndForeignScan(node);
+
+	/* Shut down any outer plan. */
+	if (outerPlanState(node))
+		ExecEndNode(outerPlanState(node));
+
+	/* Free the exprcontext */
+	ExecFreeExprContext(&node->ss.ps);
+
+	/* clean out the tuple table */
+	ExecClearTuple(node->ss.ps.ps_ResultTupleSlot);
+	ExecClearTuple(node->ss.ss_ScanTupleSlot);
+
+	/* close the relation. */
+	if (node->ss.ss_currentRelation)
+		ExecCloseScanRelation(node->ss.ss_currentRelation);
+
+	for (int i = 0; i < state->buffersize; ++i)
+		ExecClearTuple(&state->buffers[i]);
 }

@@ -249,6 +249,9 @@ ExecInitNode(Plan *node, EState *estate, int eflags)
 			break;
 
 		case T_ForeignScan:
+			if (buffered_scan_cap >= 1)
+				result = (PlanState*)ExecInitBufferedForeignScan((ForeignScan *) node, estate, eflags);
+			else
 			result = (PlanState *) ExecInitForeignScan((ForeignScan *) node,
 													   estate, eflags);
 			break;
@@ -464,6 +467,24 @@ ExecProcNode(PlanState *node)
 		case T_ForeignScanState:
 			result = ExecForeignScan((ForeignScanState *) node);
 			break;
+
+		case T_BufferedForeignScanState: {
+			BufferedForeignScanState *state = (BufferedForeignScanState*)node;
+			if (state->bufferidx < state->buffersize)
+			{
+				result = &state->buffers[state->bufferidx++];
+				break;
+			}
+			if (state->is_done)
+			{
+				result = NULL;
+				break;
+			}
+			ExecBufferedForeignScan(state);
+			result = &state->buffers[0];
+			state->bufferidx = 1;
+			break;
+		}
 
 		case T_CustomScanState:
 			result = ExecCustomScan((CustomScanState *) node);
@@ -715,6 +736,10 @@ ExecEndNode(PlanState *node)
 
 		case T_ForeignScanState:
 			ExecEndForeignScan((ForeignScanState *) node);
+			break;
+
+		case T_BufferedForeignScanState:
+			ExecEndBufferedForeignScan((BufferedForeignScanState*)node);
 			break;
 
 		case T_CustomScanState:

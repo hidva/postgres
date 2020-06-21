@@ -434,6 +434,7 @@ int			log_min_duration_statement = -1;
 int			log_temp_files = -1;
 int			trace_recovery_messages = LOG;
 
+int			buffered_scan_cap;
 int			temp_file_limit = -1;
 
 int			num_temp_buffers = 1024;
@@ -1676,6 +1677,15 @@ static struct config_bool ConfigureNamesBool[] =
 
 static struct config_int ConfigureNamesInt[] =
 {
+	{
+		{"buffered_scan_cap", PGC_USERSET, QUERY_TUNING_METHOD,
+						gettext_noop("buffered scan batch size"),
+						NULL,
+		},
+		&buffered_scan_cap,
+		0, 0, INT_MAX,
+		NULL, NULL, NULL
+	},	
 	{
 		{"archive_timeout", PGC_SIGHUP, WAL_ARCHIVING,
 			gettext_noop("Forces a switch to the next xlog file if a "

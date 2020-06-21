@@ -111,6 +111,7 @@ typedef enum NodeTag
 	T_CteScanState,
 	T_WorkTableScanState,
 	T_ForeignScanState,
+	T_BufferedForeignScanState,
 	T_CustomScanState,
 	T_JoinState,
 	T_NestLoopState,

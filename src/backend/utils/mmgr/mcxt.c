@@ -134,6 +134,7 @@ MemoryContextInit(void)
 void
 MemoryContextReset(MemoryContext context)
 {
+	return;
 	AssertArg(MemoryContextIsValid(context));
 
 	/* save a function call in common case where there are no children */
